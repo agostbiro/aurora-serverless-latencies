@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  aurora-serverless-cold-starts
+  aurora-serverless-latencies
 
-  Sample SAM Template for aurora-serverless-cold-starts
+  Measure Aurora Serverless cold starts and query latencies.
 
 Parameters:
   DatabaseName:
