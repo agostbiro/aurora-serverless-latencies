@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  aurora-serverless-cold-starts
+
+  Sample SAM Template for aurora-serverless-cold-starts
+
+Parameters:
+  DatabaseName:
+    Description: "Aurora RDS database name"
+    Type: String
+    Default: latencies
+
+Globals:
+  Function:
+    Runtime: nodejs12.x
+    Timeout: 120  # seconds
+    MemorySize: 512  # MB
+    Environment:
+      Variables:
+        DB_CLUSTER_ARN:
+          !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${RDSCluster}'
+        DB_CLUSTER_ENDPOINT:
+          Fn::GetAtt:
+            - RDSCluster
+            - Endpoint.Address
+        DB_USER_SECRET_ARN: !Ref DBSecret
+        DB_NAME: !Ref DatabaseName
+
+Resources:
+  # We want to connect to the DB directly for schema setup, so we need a VPC.
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+  SMEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: 'Secret Manager Endpoint Security Group'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-SMEndpointSecurityGroup
+  SMEndpointInboundRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: 'Allow all inbound traffic to the VPC endpoint from the VPC.'
+      IpProtocol: tcp
+      CidrIp: 10.1.0.0/16
+      FromPort: 443
+      ToPort: 443
+      GroupId:
+        Fn::GetAtt:
+          - SMEndpointSecurityGroup
+          - GroupId
+  SMEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SMEndpointSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Lambda Security Group
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-LambdaSecurityGroup
+  LambdaOutboundRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow outbound traffic inside VPC for Lambdas.
+      IpProtocol: tcp
+      CidrIp: 10.1.0.0/16
+      FromPort: 0
+      ToPort: 65535
+      GroupId:
+        Fn::GetAtt:
+          - LambdaSecurityGroup
+          - GroupId
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: RDS Security Group
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DBSecurityGroup
+  DBInboundRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: 'Allow all inbound traffic to DB from Lambdas.'
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+          - LambdaSecurityGroup
+          - GroupId
+      GroupId:
+        Fn::GetAtt:
+          - DBSecurityGroup
+          - GroupId
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.50.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Private-A
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.60.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Private-B
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'CloudFormation managed DB subnet group.'
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: 'RDS database auto-generated user password'
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin_user"}'
+        GenerateStringKey: password
+        PasswordLength: 30
+        ExcludeCharacters: '"@/\'
+  RDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:password}}' ]]
+      DatabaseName: !Ref DatabaseName
+      Engine: aurora
+      EngineMode: serverless
+      EngineVersion: '5.6.10a'
+      EnableHttpEndpoint: true
+      ScalingConfiguration:
+        AutoPause: true
+        MaxCapacity: 4
+        MinCapacity: 1
+        SecondsUntilAutoPause: 300  # 5 min
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+  MeasureFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: 'Measure Aurora Serverless cold starts and query latencies.'
+      CodeUri: lambda/
+      Handler: measure.handler
+      Events:
+        CWSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(10 minutes)
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref DBSecret
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'rds-data:ExecuteSql'
+                - 'rds-data:ExecuteStatement'
+                - 'rds-data:BatchExecuteStatement'
+                - 'rds-data:BeginTransaction'
+                - 'rds-data:RollbackTransaction'
+                - 'rds-data:CommitTransaction'
+              Resource:
+                !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${RDSCluster}'
+  SetupDBFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: 'Set up Aurora Serverless DB.'
+      CodeUri: lambda/
+      Handler: setup-db.handler
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref DBSecret
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+  FetchFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: 'Fetch measurement data'
+      CodeUri: lambda/
+      Handler: fetch.handler
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref DBSecret
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'rds-data:ExecuteSql'
+                - 'rds-data:ExecuteStatement'
+                - 'rds-data:BatchExecuteStatement'
+                - 'rds-data:BeginTransaction'
+                - 'rds-data:RollbackTransaction'
+                - 'rds-data:CommitTransaction'
+              Resource:
+                !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${RDSCluster}'
+
+Outputs:
+  MeasureFunc:
+    Description: 'Lambda function to measure Aurora Serverless cold and warm starts.'
+    Value: !Ref MeasureFunc
+  SetupDBFunc:
+    Description: 'Lambda function to set up the DB.'
+    Value: !Ref SetupDBFunc
+  FetchFunc:
+    Description: 'Lambda function to fetch measurement data from the DB.'
+    Value: !Ref FetchFunc

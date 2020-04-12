@@ -1,0 +1,14 @@
+{
+  "name": "aurora-serverless-cold-starts",
+  "version": "1.0.0",
+  "description": "Measure AWS Aurora Serverless Cold Starts",
+  "main": "measure.js",
+  "author": "Agost Biro",
+  "license": "MIT",
+  "dependencies": {
+    "aws-sdk": "^2.656.0",
+    "data-api-client": "^1.0.1",
+    "knex": "^0.20.13",
+    "mysql": "^2.18.1"
+  }
+}
