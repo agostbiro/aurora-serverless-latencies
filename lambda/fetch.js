@@ -1,13 +1,5 @@
 const DAC = require('data-api-client')
 
-function getParams(startStamp, endStamp) {
-  const ts = (performance.timeOrigin + startStamp) / 1000
-  return {
-    query_start: ts,
-    duration_ms: endStamp - startStamp
-  }
-}
-
 async function fetchTable(data, table) {
   const q =`SELECT query_start, duration_ms FROM ${table} ORDER BY id DESC`
   return data.query(q);

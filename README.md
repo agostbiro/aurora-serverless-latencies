@@ -46,6 +46,15 @@ Measurements are automatic and randomized. There is 1 expected measurement per h
 
 ### Export data
 
-`aws lambda invoke --region ${YOUR_REGION} --function-name ${YOUR_FETCH_FUNC_NAME} data.json`
+Install Boto3 and Toml:
+
+`pip install toml boto3`
+
+Then from the repo root:
+
+`python export_data.py --out_dir out`
+
+This will put CSV files `cold_starts.csv`, `inserts.csv` and `select.csv` into `out_dir`. 
+Information about the CloudFormation stack is read from `samconfig.toml`, so running `sam deploy --guided` is a prerequisite to running this script.
 
 

@@ -25,6 +25,8 @@ function customBackoff(retryCount) {
   if (retryCount >= MAX_RETRIES) {
     return -1
   } else {
+    // Start with expontential backoff at 50 ms then retry every 1 second after
+    // the first second.
     return Math.min(1000, Math.pow(2, retryCount) * 50);
   }
 }
