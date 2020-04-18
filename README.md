@@ -57,4 +57,8 @@ Then from the repo root:
 This will put CSV files `cold_starts.csv`, `inserts.csv` and `select.csv` into `out_dir`. 
 Information about the CloudFormation stack is read from `samconfig.toml`, so running `sam deploy --guided` is a prerequisite to running this script.
 
+## Data
 
+Data from previous experiments can be found in the [data](./data) folder.
+
+- [2020-04-18:](./data/2020-04-18) n=146 in us-east-1
